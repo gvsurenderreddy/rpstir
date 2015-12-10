@@ -531,20 +531,6 @@ cleanup:
     return (sta);
 }
 
-/*
- * Callback function used in verification.
- */
-
-static int verify_callback(
-    int ok2,
-    X509_STORE_CTX *store)
-{
-    if (!ok2)
-        LOG(LOG_ERR, "Error: %s",
-            X509_verify_cert_error_string(store->error));
-    return (ok2);
-}
-
 /**
  * @brief
  *     This function gets the sigval parameter from a table based on
@@ -1448,8 +1434,6 @@ verify_cert(
         sta = ERR_SCM_CERTCTX;
         goto done;
     }
-    // set the verify callback
-    X509_STORE_set_verify_cb_func(cert_ctx, verify_callback);
     // initialize the purpose
     i = X509_PURPOSE_get_by_sname("any");
     xptmp = X509_PURPOSE_get0(i);
