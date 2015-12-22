@@ -26,6 +26,7 @@ lib_rpki_librpki_a_SOURCES = \
 	lib/rpki/rpcommon.c \
 	lib/rpki/rpwork.c \
 	lib/rpki/rpwork.h \
+	lib/rpki/scmf.c \
 	lib/rpki/scmf.h \
 	lib/rpki/scm.h \
 	lib/rpki/scmmain.h \
