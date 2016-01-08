@@ -84,9 +84,22 @@ created.  If you want to start sending data to routers again, run
 }
 
 upgrade_from_0_11 () {
+    # v0.12 eliminated the SCM_FLAG_NOCHAIN flag.  Any record with
+    # that flag set should be considered invalid instead.
     mysql_cmd <<\EOF || fatal "failed to update database records"
 ALTER TABLE rpki_manifest DROP COLUMN cert_id;
+UPDATE rpki_cert SET flags=(flags & (~0x4) & (~0x8))
+    WHERE (flags & 0x8) != 0;
+UPDATE rpki_crl SET flags=(flags & (~0x4) & (~0x8))
+    WHERE (flags & 0x8) != 0;
+UPDATE rpki_ghostbusters SET flags=(flags & (~0x4) & (~0x8))
+    WHERE (flags & 0x8) != 0;
+UPDATE rpki_manifest SET flags=(flags & (~0x4) & (~0x8))
+    WHERE (flags & 0x8) != 0;
+UPDATE rpki_roa SET flags=(flags & (~0x4) & (~0x8))
+    WHERE (flags & 0x8) != 0;
 EOF
+    clear_rpki_rtr
 }
 
 upgrade_from_0_10 () {
