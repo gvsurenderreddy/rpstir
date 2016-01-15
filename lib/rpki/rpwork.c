@@ -109,7 +109,7 @@ add_paracert2DB(
     if (ansr >= 0)
     {
         /** @bug should the SCM_FLAG_VALID flag be set here? */
-        flags = done_certp->origflags & ~(SCM_FLAG_NOTVALID);
+        flags = done_certp->origflags;
         struct Extension *extp = find_extension(
             &done_certp->paracertp->toBeSigned.extensions,
             id_subjectKeyIdentifier, 0);

@@ -398,18 +398,15 @@ int64_t db_chaser_read_sia(
     uint64_t num_rows;
     uint64_t num_rows_used = 0;
     unsigned int flag;
-    unsigned int notvalid_flag;
     int ret;
 
     if (chase_invalid)
     {
         flag = 0;
-        notvalid_flag = 0;
     }
     else
     {
         flag = SCM_FLAG_VALID;
-        notvalid_flag = SCM_FLAG_NOTVALID;
     }
     MYSQL_BIND bind_in[3];
     memset(bind_in, 0, sizeof(bind_in));
@@ -423,11 +420,6 @@ int64_t db_chaser_read_sia(
     bind_in[1].buffer = &flag;
     bind_in[1].is_unsigned = (my_bool)1;
     bind_in[1].is_null = (my_bool *)0;
-    // the NOTVALID flag
-    bind_in[2].buffer_type = MYSQL_TYPE_LONG;
-    bind_in[2].buffer = &notvalid_flag;
-    bind_in[2].is_unsigned = (my_bool)1;
-    bind_in[2].is_null = (my_bool *)0;
 
     if (mysql_stmt_bind_param(stmt, bind_in))
     {
