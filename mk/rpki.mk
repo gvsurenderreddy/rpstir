@@ -1897,7 +1897,7 @@ check_SCRIPTS += \
 	tests/subsystem/step3.5.tap \
 	tests/subsystem/step3.6.tap \
 	tests/subsystem/step3.7.tap \
-	tests/subsystem/step3.9.tap
+	tests/subsystem/step3.8.tap
 
 MK_SUBST_FILES_EXEC += \
 	tests/subsystem/step1.1.tap \
@@ -1922,7 +1922,7 @@ MK_SUBST_FILES_EXEC += \
 	tests/subsystem/step3.5.tap \
 	tests/subsystem/step3.6.tap \
 	tests/subsystem/step3.7.tap \
-	tests/subsystem/step3.9.tap
+	tests/subsystem/step3.8.tap
 
 tests/subsystem/step1.1.tap: $(srcdir)/tests/subsystem/step1.1.tap.in
 tests/subsystem/step1.2.tap: $(srcdir)/tests/subsystem/step1.2.tap.in
@@ -1946,7 +1946,7 @@ tests/subsystem/step3.4.tap: $(srcdir)/tests/subsystem/step3.4.tap.in
 tests/subsystem/step3.5.tap: $(srcdir)/tests/subsystem/step3.5.tap.in
 tests/subsystem/step3.6.tap: $(srcdir)/tests/subsystem/step3.6.tap.in
 tests/subsystem/step3.7.tap: $(srcdir)/tests/subsystem/step3.7.tap.in
-tests/subsystem/step3.9.tap: $(srcdir)/tests/subsystem/step3.9.tap.in
+tests/subsystem/step3.8.tap: $(srcdir)/tests/subsystem/step3.8.tap.in
 
 
 check_PROGRAMS += tests/subsystem/testcases/cert_validate
