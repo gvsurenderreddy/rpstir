@@ -1420,11 +1420,8 @@ verify_cert(
     STACK_OF(X509) *sk_untrusted = NULL;
     X509_VERIFY_PARAM *vpm = NULL;
     X509_STORE *cert_ctx = NULL;
-    X509_LOOKUP *lookup = NULL;
-    X509_PURPOSE *xptmp = NULL;
     X509 *parent = NULL;
     int purpose;
-    int i;
     err_code sta = 0;
 
     // create X509 store
@@ -1436,17 +1433,18 @@ verify_cert(
         goto done;
     }
     // initialize the purpose
-    i = X509_PURPOSE_get_by_sname("any");
-    xptmp = X509_PURPOSE_get0(i);
-    purpose = X509_PURPOSE_get_id(xptmp);
+    purpose = X509_PURPOSE_get_id(X509_PURPOSE_get0(
+                                      X509_PURPOSE_get_by_sname("any")));
     // setup the verification parameters
     vpm = (X509_VERIFY_PARAM *)X509_VERIFY_PARAM_new();
     X509_VERIFY_PARAM_set_purpose(vpm, purpose);
     X509_STORE_set1_param(cert_ctx, vpm);
-    lookup = X509_STORE_add_lookup(cert_ctx, X509_LOOKUP_file());
-    X509_LOOKUP_load_file(lookup, NULL, X509_FILETYPE_DEFAULT);
-    lookup = X509_STORE_add_lookup(cert_ctx, X509_LOOKUP_hash_dir());
-    X509_LOOKUP_add_dir(lookup, NULL, X509_FILETYPE_DEFAULT);
+    X509_LOOKUP_load_file(
+        X509_STORE_add_lookup(cert_ctx, X509_LOOKUP_file()),
+        NULL, X509_FILETYPE_DEFAULT);
+    X509_LOOKUP_add_dir(
+        X509_STORE_add_lookup(cert_ctx, X509_LOOKUP_hash_dir()),
+        NULL, X509_FILETYPE_DEFAULT);
     ERR_clear_error();
     // set up certificate stacks
     sk_trusted = sk_X509_new_null();
