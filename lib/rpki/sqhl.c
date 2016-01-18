@@ -1410,12 +1410,11 @@ verify_cert(
     X509 *x,
     int isTrusted,
     char *parentSKI,
-    char *parentSubject,
-    int *chainOK)
+    char *parentSubject)
 {
     LOG(LOG_DEBUG, "verify_cert(conp=%p, x=%p, isTrusted=%d, parentSKI=\"%s\""
-        ", parentSubject=\"%s\", chainOK=%p)",
-        conp, x, isTrusted, parentSKI, parentSubject, chainOK);
+        ", parentSubject=\"%s\")",
+        conp, x, isTrusted, parentSKI, parentSubject);
 
     STACK_OF(X509) *sk_trusted = NULL;
     STACK_OF(X509) *sk_untrusted = NULL;
@@ -1471,10 +1470,10 @@ verify_cert(
     }
     // if the certificate has already been flagged as trusted
     // just push it on the trusted stack and verify it
-    *chainOK = 0;
+    _Bool complete_chain = 0;
     if (isTrusted)
     {
-        *chainOK = 1;
+        complete_chain = 1;
         sk_X509_push(sk_trusted, x);
     }
     else
@@ -1498,7 +1497,7 @@ verify_cert(
         {
             if (flags & SCM_FLAG_TRUSTED)
             {
-                *chainOK = 1;
+                complete_chain = 1;
                 sk_X509_push(sk_trusted, parent);
                 break;
             }
@@ -1522,8 +1521,8 @@ verify_cert(
             }
         }
     }
-    sta = 0;
-    if (*chainOK)
+    sta = ERR_SCM_NOTVALID;
+    if (complete_chain)
     {
         sta =
             checkit(conp, cert_ctx, x, sk_untrusted, sk_trusted, purpose,
@@ -2237,7 +2236,6 @@ verifyChildCert(
 
     X509 *x = NULL;
     err_code sta;
-    int chainOK;
     char pathname[PATH_MAX];
 
     if (doVerify)
@@ -2250,13 +2248,11 @@ verifyChildCert(
             sta = ERR_SCM_X509;
             goto done;
         }
-        /** @bug ignores chainOK without explanation */
-        sta = verify_cert(conp, x, 0, data->aki, data->issuer, &chainOK);
+        sta = verify_cert(conp, x, 0, data->aki, data->issuer);
         if (sta < 0)
         {
-            LOG(LOG_ERR, "Child cert %s is not valid", pathname);
-            /** @bug ignores error code without explanation */
-            deletebylid(conp, theCertTable, data->id);
+            // either the cert is not (yet) valid or there was a
+            // problem processing the cert.  either way, return.
             goto done;
         }
         /** @bug ignores error code without explanation */
@@ -2959,7 +2955,6 @@ add_cert_2(
         scmp, conp, cf, x, id, utrust, cert_id, fullpath);
 
     err_code sta = 0;
-    int chainOK;
     int ct = UN_CERT;
 
     cf->dirid = id;
@@ -3053,13 +3048,15 @@ add_cert_2(
     }
     // MCR
     // verify the cert
-    if ((sta = verify_cert(conp, x, utrust, cf->fields[CF_FIELD_AKI],
-                           cf->fields[CF_FIELD_ISSUER], &chainOK)))
+    sta = verify_cert(conp, x, utrust, cf->fields[CF_FIELD_AKI],
+                      cf->fields[CF_FIELD_ISSUER]);
+    if (sta && sta != ERR_SCM_NOTVALID)
     {
         LOG(LOG_DEBUG, "verify_cert() returned %s: %s",
             err2name(sta), err2string(sta));
         goto done1;
     }
+    _Bool is_valid = sta != ERR_SCM_NOTVALID;
     // check that no crls revoking this cert
     if ((sta = cert_revoked(scmp, conp, cf->fields[CF_FIELD_SN],
                             cf->fields[CF_FIELD_ISSUER])))
@@ -3069,7 +3066,7 @@ add_cert_2(
         goto done1;
     }
     // actually add the certificate
-    if ((sta = addStateToFlags(&cf->flags, chainOK,
+    if ((sta = addStateToFlags(&cf->flags, is_valid,
                                cf->fields[CF_FIELD_FILENAME],
                                fullpath, scmp, conp)))
     {
@@ -3084,7 +3081,7 @@ add_cert_2(
         goto done1;
     }
     // try to validate children of cert
-    if (chainOK)
+    if (is_valid)
     {
         if ((sta = verifyOrNotChildren(conp, cf->fields[CF_FIELD_SKI],
                                        cf->fields[CF_FIELD_SUBJECT],
