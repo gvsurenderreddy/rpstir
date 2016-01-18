@@ -1084,6 +1084,11 @@ struct cert_answers *find_parent_cert(
                     SCM_SRCH_DOVALUE_ALWAYS | SCM_SRCH_DO_JOIN, NULL);
     LOG(LOG_DEBUG, "searchscm() returned %s: %s",
         err2name(sta), err2string(sta));
+    if (ERR_SCM_NODATA == sta)
+    {
+        assert(!cert_answers.num_ansrs);
+        sta = 0;
+    }
     if (sta < 0)
     {
         cert_answers.num_ansrs = sta;
