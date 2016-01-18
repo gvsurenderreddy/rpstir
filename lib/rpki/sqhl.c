@@ -2698,7 +2698,7 @@ verifyOrNotChildren(
         ", aki=\"%s\", issuer=\"%s\", cert_id=%u, doVerify=%i)",
         conp, ski, subject, aki, issuer, cert_id, doVerify);
 
-    int isRoot = 1;
+    int already_verified = 1;
     int doIt;
     int idx;
     err_code sta = 0;
@@ -2739,12 +2739,13 @@ verifyOrNotChildren(
         if (doVerify)
             /** @bug ignores error code without explanation */
             doIt =
-                verifyChildCert(conp, &currPropData->data[idx], !isRoot) == 0;
+                verifyChildCert(conp, &currPropData->data[idx],
+                                !already_verified) == 0;
         else
             /** @bug ignores error code without explanation */
             doIt =
                 invalidateChildCert(conp, &currPropData->data[idx],
-                                    !isRoot) == 0;
+                                    !already_verified) == 0;
         LOG(LOG_DEBUG, "doIt=%i", doIt);
         if (doIt)
         {
@@ -2784,7 +2785,7 @@ verifyOrNotChildren(
              */
             addFlagTest(childrenSrch->wherestr, SCM_FLAG_VALID, !doVerify, 1);
         }
-        if (!isRoot)
+        if (!already_verified)
         {
             free(currPropData->data[idx].filename);
             free(currPropData->data[idx].dirname);
@@ -2797,7 +2798,7 @@ verifyOrNotChildren(
             /** @bug ignores error code without explanation */
             searchscm(conp, theCertTable, childrenSrch, NULL, &registerChild,
                       SCM_SRCH_DOVALUE_ALWAYS | SCM_SRCH_DO_JOIN, NULL);
-        isRoot = 0;
+        already_verified = 0;
     }
     currPropData = prevPropData;
 
