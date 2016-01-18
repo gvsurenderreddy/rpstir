@@ -924,6 +924,78 @@ checkit(
         return (ERR_SCM_NOTVALID);
 }
 
+static err_code
+checkit_wrapper(
+    scmcon *conp,
+    X509 *cert,
+    STACK_OF(X509) *intermediate_path,
+    X509 *trust_anchor)
+{
+    LOG(LOG_DEBUG, "checkit_wrapper(conp=%p, cert=%p,"
+        " intermediate_path=%p, trust_anchor=%p)",
+        conp, cert, intermediate_path, trust_anchor);
+
+    STACK_OF(X509) *sk_trusted = NULL;
+    X509_VERIFY_PARAM *vpm = NULL;
+    X509_STORE *cert_ctx = NULL;
+    int purpose;
+    err_code sta = 0;
+
+    // create X509 store
+    cert_ctx = X509_STORE_new();
+    if (cert_ctx == NULL)
+    {
+        LOG(LOG_DEBUG, "X509_STORE_new() returned NULL");
+        sta = ERR_SCM_CERTCTX;
+        goto done;
+    }
+    // initialize the purpose
+    purpose = X509_PURPOSE_get_id(X509_PURPOSE_get0(
+                                      X509_PURPOSE_get_by_sname("any")));
+    // setup the verification parameters
+    vpm = (X509_VERIFY_PARAM *)X509_VERIFY_PARAM_new();
+    X509_VERIFY_PARAM_set_purpose(vpm, purpose);
+    X509_STORE_set1_param(cert_ctx, vpm);
+    X509_LOOKUP_load_file(
+        X509_STORE_add_lookup(cert_ctx, X509_LOOKUP_file()),
+        NULL, X509_FILETYPE_DEFAULT);
+    X509_LOOKUP_add_dir(
+        X509_STORE_add_lookup(cert_ctx, X509_LOOKUP_hash_dir()),
+        NULL, X509_FILETYPE_DEFAULT);
+    ERR_clear_error();
+    // set up certificate stacks
+    sk_trusted = sk_X509_new_null();
+    if (sk_trusted == NULL)
+    {
+        LOG(LOG_DEBUG, "sk_X509_new_null() (for sk_trusted) returned NULL");
+        sta = ERR_SCM_X509STACK;
+        goto done;
+    }
+    sk_X509_push(sk_trusted, trust_anchor);
+    sta = checkit(conp, cert_ctx, cert, intermediate_path, sk_trusted,
+                  purpose, NULL);
+    LOG(LOG_DEBUG, "checkit() returned %s: %s",
+        err2name(sta), err2string(sta));
+done:
+    if (sk_trusted)
+    {
+        (void)sk_X509_pop(sk_trusted);
+        assert(!sk_X509_num(sk_trusted));
+        sk_X509_free(sk_trusted);
+    }
+    if (cert_ctx)
+    {
+        X509_STORE_free(cert_ctx);
+    }
+    if (vpm)
+    {
+        X509_VERIFY_PARAM_free(vpm);
+    }
+    LOG(LOG_DEBUG, "checkit_wrapper() returning %s: %s",
+        err2name(sta), err2string(sta));
+    return sta;
+}
+
 /**
  * @brief
  *     Read cert data from a file
@@ -1111,6 +1183,9 @@ struct cert_answers *find_parent_cert(
  * If there are multiple matches, only one of them is returned (which
  * one is unspecified).
  *
+ * @deprecated
+ *     Users should call find_certs() instead.
+ *
  * @param[in] conp
  *     Database connection.  This MUST NOT be NULL.
  * @param[in] ski
@@ -1244,6 +1319,155 @@ done:
     {
         *stap = sta;
     }
+    return ret;
+}
+
+/**
+ * @brief
+ *     NULL-terminated linked list of certificate data
+ *
+ * Freed by calling free_found_certs().
+ */
+struct found_cert {
+    struct found_cert *next;
+    X509 *cert;
+    unsigned int flags;
+    char pathname[sizeof(((struct cert_ansr *)NULL)->fullname)];
+    char aki[sizeof(((struct cert_ansr *)NULL)->aki)];
+    char issuer[sizeof(((struct cert_ansr *)NULL)->issuer)];
+};
+
+/**
+ * @brief
+ *     free all entries of a linked list of ::found_cert
+ */
+static void
+free_found_certs(
+    struct found_cert *head)
+{
+    while (head) {
+        struct found_cert *next = head->next;
+        free(head);
+        head = next;
+    }
+}
+
+/**
+ * @brief
+ *     find certificate(s) matching a SKI/subject
+ *
+ * This is a replacement for parent_cert().  It behaves the same,
+ * except LTAM paracerts are ignored and it returns all parent certs,
+ * not just one of them.
+ *
+ * @param[in] conp
+ *     Database connection.  This MUST NOT be NULL.
+ * @param[in] ski
+ *     The subject key identifier (SKI) of the certificate(s).  This
+ *     MUST NOT be NULL.
+ * @param[in] subject
+ *     The subject of the certificate(s).  This may be NULL, in which
+ *     case only @p ski is used to perform the search.
+ * @param[out] found_certsp
+ *     If non-NULL and this function succeeds, the value at this
+ *     location will be set to point to the head of a linked list of
+ *     matching certificate information.  If there are no matching
+ *     certificates, the value at this location will be set to NULL.
+ *     The caller is responsible for freeing this list by calling
+ *     free_found_certs().  This may be NULL.
+ * @return
+ *     0 on success, a non-zero error code otherwise.
+ *
+ * @note
+ *     It is not an error if the given certificate does not have a
+ *     parent.
+ */
+static err_code
+find_certs(
+    scmcon *conp,
+    const char *ski,
+    const char *subject,
+    struct found_cert **found_certsp)
+{
+    LOG(LOG_DEBUG, "find_certs(conp=%p, ski=\"%s\", subject=\"%s\""
+        ", found_certsp=%p)",
+        conp, ski, subject, found_certsp);
+
+    struct found_cert *found_certs = NULL;
+    err_code ret = 0;
+    struct cert_answers *cert_answersp = find_parent_cert(ski, subject, conp);
+
+    assert(cert_answersp);
+    if (cert_answersp->num_ansrs < 0)
+    {
+        ret = cert_answersp->num_ansrs;
+        LOG(LOG_DEBUG, "cert_answersp->num_ansrs is %s: %s",
+            err2name(ret), err2string(ret));
+        goto done;
+    }
+
+    LOG(LOG_DEBUG, "got %i answers", cert_answersp->num_ansrs);
+    for (int i = 0; i < cert_answersp->num_ansrs; ++i)
+    {
+        struct cert_ansr *ansr = &cert_answersp->cert_ansrp[i];
+        LOG(LOG_DEBUG, "  answer %i:", i);
+        LOG(LOG_DEBUG, "    dirname=\"%s\"", ansr->dirname);
+        LOG(LOG_DEBUG, "    filename=\"%s\"", ansr->filename);
+        LOG(LOG_DEBUG, "    fullname=\"%s\"", ansr->fullname);
+        LOG(LOG_DEBUG, "    aki=\"%s\"", ansr->aki);
+        LOG(LOG_DEBUG, "    issuer=\"%s\"", ansr->issuer);
+        LOG(LOG_DEBUG, "    flags=0x%x", ansr->flags);
+        LOG(LOG_DEBUG, "    local_id=%u", ansr->local_id);
+
+        if (ansr->flags & SCM_FLAG_ISPARACERT)
+        {
+            LOG(LOG_WARNING, "ignoring paracert");
+            continue;
+        }
+
+        struct found_cert *found_cert = malloc(sizeof(struct found_cert));
+        if (!found_cert)
+        {
+            LOG(LOG_ERR, "out of memory");
+            free_found_certs(found_certs);
+            ret = ERR_SCM_NOMEM;
+            goto done;
+        }
+
+        // set ::next first so that if there's an error the whole list
+        // can be freed via found_cert
+        found_cert->next = found_certs;
+
+        // set the pathname next so that we can do some safety checks
+        // before passing it to readCertFromFile()
+        strncpy(&(found_cert->pathname[0]), ansr->fullname,
+                sizeof(found_cert->pathname));
+        assert('\0' == found_cert->pathname[sizeof(found_cert)->pathname - 1]);
+
+        found_cert->cert = readCertFromFile(found_cert->pathname, &ret);
+        if (ret)
+        {
+            LOG(LOG_DEBUG, "readCertFromFile() returned %s: %s",
+                err2name(ret), err2string(ret));
+            free_found_certs(found_cert);
+            goto done;
+        }
+        found_cert->flags = ansr->flags;
+        strncpy(&(found_cert->aki[0]), ansr->aki, sizeof(found_cert->aki));
+        assert('\0' == found_cert->aki[sizeof(found_cert)->aki - 1]);
+        strncpy(&(found_cert->issuer[0]), ansr->issuer,
+                sizeof(found_cert->issuer));
+        assert('\0' == found_cert->issuer[sizeof(found_cert)->issuer - 1]);
+
+        found_certs = found_cert;
+    }
+    if (found_certsp)
+        *found_certsp = found_certs;
+    else
+        free_found_certs(found_certs);
+done:
+    LOG(LOG_DEBUG, "find_certs() returning %s: %s",
+        err2name(ret), err2string(ret));
     return ret;
 }
 
@@ -1402,6 +1626,184 @@ cert_revoked(
 
 /**
  * @brief
+ *     recursive helper for check_paths()
+ *
+ * @param[in] x
+ *     The certificate to validate.  This MUST NOT be NULL.
+ * @param[in,out] untrusted
+ *     Stack of untrusted certificates.  This MUST be empty at the
+ *     start of the search.  At the end of the search (when the
+ *     top-level call to this function returns) this stack will either
+ *     contain the valid non-TA ancestors of @p x or it will still be
+ *     empty (because there is no valid path).  This MUST NOT be NULL.
+ * @param[in,out] trusted
+ *     Stack of trusted certificates.  This MUST be empty at the start
+ *     of the search.  At the end of the search (when the top-level
+ *     call to this function returns) this stack will either contain
+ *     the trust anchor at the top of the valid path or it will still
+ *     be empty (because there is no valid path).  This MUST NOT be
+ *     NULL.
+ * @param[in] start
+ *     This MUST be NULL at the start of the search.  Recursive calls
+ *     use this parameter to perform the incremental step.
+ * @return
+ *     0 if @p x is valid under the certificate chain contained in @p
+ *     untrusted and @p trusted, a non-zero error code otherwise.
+ */
+/**
+ * @brief
+ *     search all certification paths until a valid path is found
+ *
+ * @bug
+ *     If this function encounters a candidate ancestor certificate
+ *     that could never be a valid ancestor (e.g., because its RFC3779
+ *     resources could never be a superset of the given certificate's
+ *     resources), paths through that ancestor candidate are not
+ *     pruned.  This means that a specially crafted hierarchy could
+ *     cause exponential growth in resource consumption (memory
+ *     consumption or CPU time), which means this is vulnerable to a
+ *     denial of service attack.  Fixing this requires marking
+ *     ancestor candidates as they are ruled out so that recursive
+ *     calls skip all paths involving those certificates.  That would
+ *     change the algorithmic complexity from exponential to linear.
+ *
+ * @param[in] x
+ *     The certificate to validate.  This MUST NOT be NULL.
+ * @param[in] isTrusted
+ *     True if the certificate is trusted (a trust anchor), false if
+ *     it must validate against a path to a different (trusted)
+ *     certificate.
+ * @param[in] aki
+ *     AKI of @p x.  This MUST NOT be NULL.
+ * @param[in] issuer
+ *     Issuer of @p x.  This MUST NOT be NULL.
+ * @return
+ *     0 if @p x is valid under some path, a non-zero error code
+ *     otherwise.
+ */
+
+static err_code
+verify_cert_dfs(
+    scmcon *conp,
+    X509 *cert,
+    STACK_OF(X509) *intermediates,
+    _Bool starting_ancestor_trusted,
+    X509 *starting_ancestor,
+    const char *aki,
+    const char *issuer)
+{
+    LOG(LOG_DEBUG, "verify_cert_dfs(conp=%p, cert=%p, intermediates=%p"
+        ", starting_ancestor_trusted=%i, starting_ancestor=%p, aki=\"%s\""
+        ", issuer=\"%s\")",
+        conp, cert, intermediates, starting_ancestor_trusted,
+        starting_ancestor, aki, issuer);
+
+    struct found_cert *found_certs = NULL;
+    err_code sta = 0;
+
+    // create intermediates if not provided
+    _Bool free_intermediates = 0;
+    if (!intermediates)
+    {
+        intermediates = sk_X509_new_null();
+        if (!intermediates)
+        {
+            LOG(LOG_ERR, "sk_X509_new_null() returned NULL");
+            sta = ERR_SCM_X509STACK;
+            goto done;
+        }
+        free_intermediates = 1;
+    }
+    LOG(LOG_DEBUG, "sk_X509_num(intermediates) == %i",
+        sk_X509_num(intermediates));
+
+    // figure out the starting point for the search
+    X509 *ancestor = starting_ancestor;
+    if (!ancestor)
+    {
+        ancestor = cert;
+        assert(!sk_X509_num(intermediates));
+        if (starting_ancestor_trusted)
+        {
+            sta = checkit_wrapper(conp, cert, intermediates, cert);
+            goto done;
+        }
+    }
+
+    // base case: we've reached a trust anchor
+    if (starting_ancestor_trusted)
+    {
+        sta = checkit_wrapper(conp, cert, intermediates, ancestor);
+        if (!sta)
+        {
+            // Add the trust anchor.  This means that intermediates is
+            // no longer intermediates, but the whole ancestor path.
+            // But it's the easiest way to communicate the whole path
+            // to the caller.
+            sk_X509_push(intermediates, ancestor);
+        }
+        goto done;
+    }
+
+    sta = find_certs(conp, aki, issuer, &found_certs);
+    if (sta)
+    {
+        LOG(LOG_DEBUG, "find_certs() returned %s: %s",
+            err2name(sta), err2string(sta));
+        goto done;
+    }
+
+    if (!found_certs)
+    {
+        // this cert is not a trust anchor and no next step in the
+        // ancestor path was found, so this cert can't be valid
+        sta = ERR_SCM_NOTVALID;
+        goto done;
+    }
+
+    if (starting_ancestor)
+    {
+        sk_X509_push(intermediates, ancestor);
+    }
+
+    for (struct found_cert *grand_ancestor = found_certs;
+         grand_ancestor;
+         grand_ancestor = grand_ancestor->next)
+    {
+        sta = verify_cert_dfs(
+            conp,
+            cert,
+            intermediates,
+            grand_ancestor->flags & SCM_FLAG_TRUSTED,
+            grand_ancestor->cert,
+            grand_ancestor->aki,
+            grand_ancestor->issuer);
+        if (sta != ERR_SCM_NOTVALID)
+        {
+            goto done;
+        }
+    }
+
+    if (starting_ancestor)
+    {
+        (void)sk_X509_pop(intermediates);
+    }
+done:
+    if (found_certs)
+    {
+        free_found_certs(found_certs);
+    }
+    if (free_intermediates)
+    {
+        sk_X509_pop_free(intermediates, X509_free);
+    }
+    LOG(LOG_DEBUG, "verify_cert_dfs() returning %s: %s",
+        err2name(sta), err2string(sta));
+    return sta;
+}
+
+/**
+ * @brief
  *     Certificate verification code by mudge
  */
 static err_code
@@ -1415,124 +1817,8 @@ verify_cert(
     LOG(LOG_DEBUG, "verify_cert(conp=%p, x=%p, isTrusted=%d, parentSKI=\"%s\""
         ", parentSubject=\"%s\")",
         conp, x, isTrusted, parentSKI, parentSubject);
-
-    STACK_OF(X509) *sk_trusted = NULL;
-    STACK_OF(X509) *sk_untrusted = NULL;
-    X509_VERIFY_PARAM *vpm = NULL;
-    X509_STORE *cert_ctx = NULL;
-    X509 *parent = NULL;
-    int purpose;
-    err_code sta = 0;
-
-    // create X509 store
-    cert_ctx = X509_STORE_new();
-    if (cert_ctx == NULL)
-    {
-        LOG(LOG_DEBUG, "X509_STORE_new() returned NULL");
-        sta = ERR_SCM_CERTCTX;
-        goto done;
-    }
-    // initialize the purpose
-    purpose = X509_PURPOSE_get_id(X509_PURPOSE_get0(
-                                      X509_PURPOSE_get_by_sname("any")));
-    // setup the verification parameters
-    vpm = (X509_VERIFY_PARAM *)X509_VERIFY_PARAM_new();
-    X509_VERIFY_PARAM_set_purpose(vpm, purpose);
-    X509_STORE_set1_param(cert_ctx, vpm);
-    X509_LOOKUP_load_file(
-        X509_STORE_add_lookup(cert_ctx, X509_LOOKUP_file()),
-        NULL, X509_FILETYPE_DEFAULT);
-    X509_LOOKUP_add_dir(
-        X509_STORE_add_lookup(cert_ctx, X509_LOOKUP_hash_dir()),
-        NULL, X509_FILETYPE_DEFAULT);
-    ERR_clear_error();
-    // set up certificate stacks
-    sk_trusted = sk_X509_new_null();
-    if (sk_trusted == NULL)
-    {
-        LOG(LOG_DEBUG, "sk_X509_new_null() (for sk_trusted) returned NULL");
-        X509_STORE_free(cert_ctx);
-        X509_VERIFY_PARAM_free(vpm);
-        sta = ERR_SCM_X509STACK;
-        goto done;
-    }
-    sk_untrusted = sk_X509_new_null();
-    if (sk_untrusted == NULL)
-    {
-        LOG(LOG_DEBUG, "sk_X509_new_null() (for sk_untrusted) returned NULL");
-        sk_X509_free(sk_trusted);
-        X509_STORE_free(cert_ctx);
-        X509_VERIFY_PARAM_free(vpm);
-        sta = ERR_SCM_X509STACK;
-        goto done;
-    }
-    // if the certificate has already been flagged as trusted
-    // just push it on the trusted stack and verify it
-    _Bool complete_chain = 0;
-    if (isTrusted)
-    {
-        complete_chain = 1;
-        sk_X509_push(sk_trusted, x);
-    }
-    else
-    {
-        int flags;
-        /**
-         * @bug
-         *     parent_cert()'s error code is not checked, so this
-         *     logic does not distinguish an error from a parentless
-         *     cert
-         */
-        parent =
-            parent_cert(conp, parentSKI, parentSubject, &sta, NULL, &flags);
-        LOG(LOG_DEBUG, "parent_cert() (for SKI/subject) error code is %s: %s",
-            err2name(sta), err2string(sta));
-        if (!parent)
-        {
-            LOG(LOG_DEBUG, "parent_cert() returned NULL");
-        }
-        while (parent != NULL)
-        {
-            if (flags & SCM_FLAG_TRUSTED)
-            {
-                complete_chain = 1;
-                sk_X509_push(sk_trusted, parent);
-                break;
-            }
-            else
-            {
-                sk_X509_push(sk_untrusted, parent);
-                /**
-                 * @bug
-                 *     parent_cert()'s error code is not checked, so
-                 *     this logic does not distinguish an error from a
-                 *     parentless cert
-                 */
-                parent = parent_cert(conp, parentAKI, parentIssuer, &sta, NULL,
-                                     &flags);
-                LOG(LOG_DEBUG, "parent_cert() (for AKI/issuer) error code is"
-                    " %s: %s", err2name(sta), err2string(sta));
-                if (!parent)
-                {
-                    LOG(LOG_DEBUG, "parent_cert() returned NULL");
-                }
-            }
-        }
-    }
-    sta = ERR_SCM_NOTVALID;
-    if (complete_chain)
-    {
-        sta =
-            checkit(conp, cert_ctx, x, sk_untrusted, sk_trusted, purpose,
-                    NULL);
-        LOG(LOG_DEBUG, "checkit() returned %s: %s",
-            err2name(sta), err2string(sta));
-    }
-    sk_X509_pop_free(sk_untrusted, X509_free);
-    sk_X509_pop_free(sk_trusted, X509_free);
-    X509_STORE_free(cert_ctx);
-    X509_VERIFY_PARAM_free(vpm);
-done:
+    err_code sta = verify_cert_dfs(conp, x, NULL, isTrusted,
+                                   NULL, parentSKI, parentSubject);
     LOG(LOG_DEBUG, "verify_cert() returning %s: %s",
         err2name(sta), err2string(sta));
     return (sta);
