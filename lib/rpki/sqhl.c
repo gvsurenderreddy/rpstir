@@ -3047,6 +3047,14 @@ add_cert_2(
         cf->flags |= SCM_FLAG_NOTYET;
     }
     // MCR
+    // check that no crls revoking this cert
+    if ((sta = cert_revoked(scmp, conp, cf->fields[CF_FIELD_SN],
+                            cf->fields[CF_FIELD_ISSUER])))
+    {
+        LOG(LOG_DEBUG, "cert_revoked() returned %s: %s",
+            err2name(sta), err2string(sta));
+        goto done1;
+    }
     // verify the cert
     sta = verify_cert(conp, x, utrust, cf->fields[CF_FIELD_AKI],
                       cf->fields[CF_FIELD_ISSUER]);
@@ -3057,14 +3065,6 @@ add_cert_2(
         goto done1;
     }
     _Bool is_valid = sta != ERR_SCM_NOTVALID;
-    // check that no crls revoking this cert
-    if ((sta = cert_revoked(scmp, conp, cf->fields[CF_FIELD_SN],
-                            cf->fields[CF_FIELD_ISSUER])))
-    {
-        LOG(LOG_DEBUG, "cert_revoked() returned %s: %s",
-            err2name(sta), err2string(sta));
-        goto done1;
-    }
     // actually add the certificate
     if ((sta = addStateToFlags(&cf->flags, is_valid,
                                cf->fields[CF_FIELD_FILENAME],
