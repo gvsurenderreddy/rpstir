@@ -52,7 +52,6 @@ static scmtab *theGBRTable = NULL;
 static scmtab *theDirTable = NULL;
 static scmtab *theMetaTable = NULL;
 static scm *theSCMP = NULL;
-static int useParacerts = 1;
 static int allowex = 0;
 
 void setallowexpired(
@@ -1349,13 +1348,11 @@ static X509 *parent_cert(
             /** @bug shouldn't sta be set to an error code? */
             goto done;
         }
-        // if using paracerts, choose the paracert
-
-        if ((useParacerts &&
-             (cert_answersp->cert_ansrp[0].flags & SCM_FLAG_ISPARACERT)) ||
-            (!useParacerts &&
-             !(cert_answersp->cert_ansrp[0].flags & SCM_FLAG_ISPARACERT)))
+        if (!(cert_answersp->cert_ansrp[0].flags & SCM_FLAG_ISPARACERT))
+        {
             cert_ansrp = &cert_answersp->cert_ansrp[0];
+        }
+
         if (!parentAKI || !parentIssuer)
         {
             goto done;
@@ -3334,7 +3331,6 @@ add_cert(
     {
         goto done;
     }
-    useParacerts = 0;
     sta = add_cert_2(scmp, conp, cf, x, id, utrust, cert_id, outfull);
     LOG(LOG_DEBUG, "add_cert_2() returned error code %s: %s",
         err2name(sta), err2string(sta));
@@ -4303,7 +4299,6 @@ add_object(
     object_type typ;
     err_code sta;
 
-    useParacerts = 0;
     if (scmp == NULL || conp == NULL || conp->connected == 0 ||
         outfile == NULL || outdir == NULL || outfull == NULL)
     {
