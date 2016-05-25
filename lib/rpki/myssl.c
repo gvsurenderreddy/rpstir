@@ -1931,6 +1931,7 @@ rescert_flags_chk(
                     "in an X.509 certificate.  Please ensure that OpenSSL "
                     "was compiled with RFC 3779 support.");
         }
+        LOG(LOG_ERR, "certificate's flags are not appropriate for its type");
         ret = ERR_SCM_BADFLAGS;
         goto done;
     }
@@ -1964,6 +1965,7 @@ rescert_version_chk(
     LOG(LOG_DEBUG, "certificate version: %lu", l + 1);
     if (l != 2)                 /* see above: value of 2 means v3 */
     {
+        LOG(LOG_ERR, "bad certificate version (must be v3, is %lu)", l+1);
         ret = ERR_SCM_BADCERTVERS;
         goto done;
     }
